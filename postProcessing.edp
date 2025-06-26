@@ -1,0 +1,95 @@
+////////////////////////////////////////////////////////
+// POST-PROCESSING: Unsteady 2D Navier–Stokes (Channel)
+////////////////////////////////////////////////////////
+
+include "ffmatlib/ffmatlib.idp"
+
+////////////////// Parameters //////////////////
+string channel = "SmoothChannel";
+real L = 10;
+real H = 1.0;
+real Nx = 300;
+real Ny = 80;
+real u0 = 1.0;
+real Re = 100.0;
+real t = 15;
+int nPoints = 500;
+
+/////////////////fixed points////////////////////////
+
+real[int] xFixed = [0.00, 5.13, 8.13];   // Ux vs Y at these X values
+real[int] yFixed = [0.00, 0.52, 0.75];  // Uy vs X at these Y values
+
+/////////////////////////////////////////////////
+
+string folder = channel+"_L=" + ("" + L) + "_H=" + ("" + H)
+              + "_Nx=" + ("" + Nx) + "_Ny=" + ("" + Ny)
+              + "_u0=" + ("" + u0) + "_Re=" + ("" + Re)
+              +"_t="+(""+t);
+
+string postFolder = "Post_Processing/" + folder;
+system("if not exist \"" + postFolder + "\" mkdir \"" + postFolder + "\"");
+
+////////////////// Load Mesh //////////////////
+mesh Th = readmesh("Post_Processing/" + folder + "/Mesh" + ".msh");
+
+fespace Uh(Th, P2);
+fespace Ph(Th, P1);
+fespace UhxUhxPh(Th, [P2, P2, P1]);
+UhxUhxPh [ux, uy, p];
+
+// Load latest last saved step data
+int lastStep = int(t / 0.01);  
+string uxFile = "results/" + folder + "/ux_" + lastStep + ".dat";
+string uyFile = "results/" + folder + "/uy_" + lastStep + ".dat";
+string pFile  = "results/" + folder + "/p_" + lastStep + ".dat";
+
+ifstream finUx(uxFile);
+ finUx >> ux[];
+
+ifstream finUy(uyFile); 
+finUy >> uy[];
+
+ifstream finP(pFile);   
+finP >> p[];
+
+////////////////// Postprocessing //////////////////
+fespace PPH(Th, P1);
+PPH UX, UY, VORT;
+Uh vort;
+
+UX = ux;
+UY = uy;
+vort = dx(uy) - dy(ux);
+VORT = vort;
+
+////////////////// Velocity Profiles //////////////////
+real delY=H/nPoints;
+real delX=L/nPoints;
+real xFix;
+real yFix;
+real xPoint;
+real yPoint;
+real yVar;
+real xVar;
+
+for(int j=0; j<3;j++){
+  xFix=xFixed[j];
+  yFix=yFixed[j];
+  xPoint=0;
+  yPoint=-H/2;
+
+  ofstream uxVal(postFolder + "/Ux_Y_Profile_xFix=" +  xFix +  ".dat",append);
+  ofstream uyVal(postFolder + "/Uy_X_Profile_yFix=" +  yFix +  ".dat",append);
+
+  for(int i=0;i<nPoints;i++){
+    yVar=yPoint+i*delY;
+    xVar=xPoint+i*delX;
+    uxVal<< yVar << " "<< UX(xFix,yVar)<<endl;
+    uyVal<< xVar << " "<< UY(xVar,yFix)<<endl;
+
+  }
+}
+
+
+//////////////// DONE ////////////////

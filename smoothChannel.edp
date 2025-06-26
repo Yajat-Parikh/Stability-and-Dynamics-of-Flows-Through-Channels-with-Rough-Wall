@@ -1,0 +1,158 @@
+/////////////////////// PARAMETERS //////////////////
+
+// Meshing Parameters
+real L = 10.0 ;
+real H = 1.0;
+int Nx = 150;
+int Ny = 50;
+real ProbeX = 4;
+real ProbeY = 0.25;
+
+// Flow Parameters
+real u0 = 1.0;                          // Uniform inlet velocity
+real Re = 100.0;                        // Reynolds number
+real dt = 0.01;                         // Time step
+real nu = u0 * H / Re;
+real t = 5;
+
+int stepvisu = 25;                      // Visualization frequency
+int stepsave = 500;
+int vis = 0;                            // Non-interactive visualization
+int meshVis=0; 
+
+////////////////Create folder /////////////////////////
+
+string folder = "SmoothChannel_" + "L=" + L + "_H=" + H
+                + "_Nx=" + Nx + "_Ny=" + Ny
+                + "_u0=" + u0 + "_Re=" + Re
+                +"_t="+(""+t);
+
+system("if not exist \"results/" + folder + "\" mkdir \"results/" + folder + "\"");
+system("if not exist \"Post_Processing/" + folder + "\" mkdir \"Post_Processing/" + folder + "\"");
+
+///////////////////////Defining Functions///////////
+func real uinlet(real x, real y) {
+    return  u0 * (1-4*sqr(y)/sqr(H));  // Poiseuille profile
+}
+
+/////////////////////// MESH ///////////////////////
+
+border inlet(t=H/2,-H/2){x=0;y=t;label=1;};
+border bottom(t=0,L) {x=t;y=-H/2; label=2;};
+border outlet(t=-H/2,H/2) {x=L;y=t;label=3;};
+border top(t=L,0) {x=t;y=H/2;label=4;};
+
+
+mesh Th = buildmesh(bottom(Nx) + outlet(Ny) + top(Nx) + inlet(Ny));
+plot(Th, wait=meshVis);
+
+////////////////// FINITE ELEMENT SPACES //////////////////
+
+fespace Uh(Th, P2);                     // velocity components space
+fespace Ph(Th, P1);                     // pressure space
+fespace UhxUhxPh(Th, [P2, P2, P1]);     // combined space for [ux, uy, p]
+
+///////////////// FLOW VARIABLES //////////////////
+
+UhxUhxPh [ux, uy, p];                   // current flow
+UhxUhxPh [upx, upy, pp];                // previous flow
+UhxUhxPh [vx, vy, q];                   // test functions
+UhxUhxPh [rhs1, rhs2, rhs3];            // RHS
+
+////////////////// VARIATIONAL FORMS //////////////////
+
+varf NS([ux, uy, p], [vx, vy, q]) =
+    int2d(Th)(
+        (ux*vx + uy*vy)/dt
+      + nu * (dx(ux)*dx(vx) + dy(ux)*dy(vx) + dx(uy)*dx(vy) + dy(uy)*dy(vy))
+      - p*(dx(vx) + dy(vy))
+      + q*(dx(ux) + dy(uy))
+    )
+    +int1d(Th,3)(nu*( (N.y*dy(ux)+N.x*dx(ux))*vx)
+             - (  (N.y*vy + N.x*vx )*p) )
+    + on(1, ux = uinlet(x,y), uy = 0)       // Inlet
+    + on(2, ux = 0, uy = 0)                 // Bottom wall
+    + on(4, ux = 0, uy = 0);                // Top wall
+
+varf NSRHS([ux, uy, p], [vx, vy, q]) =
+    int2d(Th)(
+        (upx*vx + upy*vy)/dt
+      - (upx*dx(upx)*vx + upx*dy(upx)*vy + upy*dx(upy)*vx + upy*dy(upy)*vy)
+    )
+    +int1d(Th,3)(nu*( (N.y*dy(ux)+N.x*dx(ux))*vx)
+             - (  (N.y*vy + N.x*vx )*p) )
+    + on(1, ux = uinlet(x,y), uy = 0)       // Inlet
+    + on(2, ux = 0, uy = 0)                 // Bottom wall
+    + on(4, ux = 0, uy = 0);                // Top wall
+
+
+///////////////////// INITIAL CONDITIONS //////////////////////
+
+real tps = 0.0;
+[ux, uy, p] = [0, 0, 0];
+[upx, upy, pp] = [0, 0, 0];
+
+/////////////////////Matrix Formulation/////////
+matrix A = NS(UhxUhxPh, UhxUhxPh);
+
+
+//////////////////// TIME LOOP //////////////////////
+
+int nTimeSteps = int(t / dt);
+
+for (int i = 0; i <= nTimeSteps; i++) {
+
+    [upx, upy, pp] = [ux, uy, p];
+
+    rhs1[] = NSRHS(0, UhxUhxPh);
+    
+
+    ux[] = A^-1 * rhs1[];
+
+    tps += dt;
+    cout << "Time: " << tps << endl;
+
+    if (!(i % stepvisu)) {
+        cout << "Time: " << tps << endl;
+        plot(uy, wait=vis, fill=1, value=1, cmm="uy");
+        plot(p,  wait=vis, fill=1, value=1, cmm="pressure");
+        plot(ux, wait=vis, fill=1, value=1, cmm="ux");
+
+    }
+
+    if (!(i % stepsave)) {
+    ofstream f1("results/" + folder + "/ux_" + i + ".dat");
+    ofstream f2("results/" + folder + "/uy_" + i + ".dat");
+    ofstream f3("results/" + folder + "/p_" + i + ".dat");
+    f1 << ux[]<<endl;
+    f2 << uy[]<<endl;
+    f3 << p[]<<endl;
+    }
+    ofstream uxvel("results/" + folder+"/ux_"+"probe("+(""+ProbeX)+","+(""+ProbeY)+")" + ".dat",append);
+    ofstream uyvel("results/" + folder+"/uy_"+"probe("+(""+ProbeX)+","+(""+ProbeY)+")" +".dat",append);
+
+    uxvel<< tps << " " << ux(ProbeX,ProbeY) <<endl ;
+    uyvel<< tps << " " << uy(ProbeX,ProbeY) <<endl ;
+}
+
+/////// POST-PROCESSING ////////////
+
+fespace PPH(Th, P1);
+PPH UX, UY, VORT;
+
+UX = ux;
+UY = uy;
+
+Uh vort;
+vort = dx(uy) - dy(ux);
+VORT = vort;
+
+
+include "ffmatlib/ffmatlib.idp";
+
+savemesh(Th, "Post_Processing/" + folder + "/Mesh"  + ".msh");
+ffSaveVh(Th, PPH, "Post_Processing/" + folder + "/FiniteElementSpace"  + ".txt");
+ffSaveData(UX, "Post_Processing/" + folder + "/UX"  + ".txt");
+ffSaveData(UY, "Post_Processing/" + folder + "/UY" + ".txt");
+ffSaveData(VORT, "Post_Processing/" + folder + "/VORT" + ".txt");
+
